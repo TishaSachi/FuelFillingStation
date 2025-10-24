@@ -58,7 +58,7 @@ SCENARIOS = {
                             # ------ Helper functions -----------
 
 def triangular_sample(tpl):
-    return random.triangular(*tpl)
+    return random.triangular(*tpl)  # Sample a value from a triangular distribution
 
 def sample_liters(fuel_type):
     mapping = {
@@ -66,14 +66,15 @@ def sample_liters(fuel_type):
         'Octane95': 'Car_Octane95',
         'Diesel': 'Lorry_Diesel'
     }
-    return triangular_sample(LITERS_DIST[mapping[fuel_type]])
+    return triangular_sample(LITERS_DIST[mapping[fuel_type]])  # Sample liters based on fuel type
 
 def sample_payment_time():
-    return triangular_sample(PAYMENT_TIME_DIST)
+    return triangular_sample(PAYMENT_TIME_DIST)  # Sample payment time
 
 def interarrival_time(rate_per_hour):
-    mean_minutes = 60.0 / rate_per_hour
-    return random.expovariate(1.0 / mean_minutes)
+    mean_minutes = 60.0 / rate_per_hour  # Convert rate to mean interarrival in minutes
+    return random.expovariate(1.0 / mean_minutes)  # Sample time until next arrival (exponential)
+
 
 
 
@@ -82,39 +83,41 @@ def interarrival_time(rate_per_hour):
 class GasStation:
     def __init__(self, env, pipes_config):
         self.env = env
-        self.resources = {fuel: simpy.Resource(env, capacity=pipes_config[fuel]) for fuel in FUEL_TYPES}
-        self.wait_times = {fuel: [] for fuel in FUEL_TYPES}
-        self.total_times = {fuel: [] for fuel in FUEL_TYPES}
-        self.queue_length_series = {fuel: [] for fuel in FUEL_TYPES}
+        self.resources = {fuel: simpy.Resource(env, capacity=pipes_config[fuel]) for fuel in FUEL_TYPES}  # Pump resources
+        self.wait_times = {fuel: [] for fuel in FUEL_TYPES}        # Wait time per fuel type
+        self.total_times = {fuel: [] for fuel in FUEL_TYPES}       # Total time per fuel type
+        self.queue_length_series = {fuel: [] for fuel in FUEL_TYPES}  # Queue length over time
 
     def record_queue(self):
         for fuel in FUEL_TYPES:
-            self.queue_length_series[fuel].append((self.env.now, len(self.resources[fuel].queue)))
+            self.queue_length_series[fuel].append((self.env.now, len(self.resources[fuel].queue)))  # Record queue
 
     def customer_process(self, fuel_type, name):
         arrival_time = self.env.now
-        self.record_queue()
+        self.record_queue()  # Queue at arrival
         with self.resources[fuel_type].request() as req:
             yield req
             wait_time = self.env.now - arrival_time
-            self.wait_times[fuel_type].append(wait_time)
+            self.wait_times[fuel_type].append(wait_time)  # Store wait time
 
             liters = sample_liters(fuel_type)
-            fueling_time = liters / FLOW_RATE
+            fueling_time = liters / FLOW_RATE  # Time to fuel
             payment_time = sample_payment_time()
             total_service = fueling_time + payment_time
-            yield self.env.timeout(total_service)
+            yield self.env.timeout(total_service)  # Simulate fueling + payment
 
-            self.total_times[fuel_type].append(self.env.now - arrival_time)
-            self.record_queue()
+            self.total_times[fuel_type].append(self.env.now - arrival_time)  # Total time
+            self.record_queue()  # Queue after service
 
     def arrival_generator(self, fuel_type, arrival_rate):
         i = 0
         while self.env.now < SIM_TIME:
             iat = interarrival_time(arrival_rate)
-            yield self.env.timeout(iat)
+            yield self.env.timeout(iat)  # Wait until next arrival
             i += 1
-            self.env.process(self.customer_process(fuel_type, f'{fuel_type}-{i}'))
+            self.env.process(self.customer_process(fuel_type, f'{fuel_type}-{i}'))  # Start customer process
+
+
 
                                     # ------ Run the simulation ----------
 
@@ -122,14 +125,15 @@ def run_scenario(name, config):
     print(f"\n--- Scenario: {name} ---")
     random.seed(RANDOM_SEED)
     env = simpy.Environment()
-    station = GasStation(env, config['PIPES_CONFIG'])
+    station = GasStation(env, config['PIPES_CONFIG'])  # Initialize station with given pipe config
 
+    # Start arrival generators for each fuel type
     for fuel, rate in config['ARRIVAL_RATES'].items():
         env.process(station.arrival_generator(fuel, rate))
 
-    env.run(until=SIM_TIME)
+    env.run(until=SIM_TIME)  # Run the simulation
 
-    # Print metrics
+    # Print average wait and total times
     for fuel in FUEL_TYPES:
         avg_wait = statistics.mean(station.wait_times[fuel]) if station.wait_times[fuel] else 0
         avg_total = statistics.mean(station.total_times[fuel]) if station.total_times[fuel] else 0
@@ -148,5 +152,6 @@ def run_scenario(name, config):
             plt.show()
 
 if __name__ == "__main__":
+    # Run all defined scenarios
     for scenario_name, scenario_config in SCENARIOS.items():
         run_scenario(scenario_name, scenario_config)

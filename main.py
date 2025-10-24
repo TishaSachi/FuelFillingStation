@@ -3,6 +3,7 @@ Basic Sri Lankan Gas Station Simulation
 - Octane 92 & 95 share 2 pumps (1 pipe per side)
 - Diesel: 2 pumps, 2 pipes each
 - Metrics: wait time, total time, queue length
+- Scenarios: Normal, Peak Traffic, Extra Pumps
 - I've used the Hanwella cypetco petrol station
 """
 
@@ -21,9 +22,6 @@ SIM_TIME = SIM_HOURS * 60  # in minutes
 # Fuel types
 FUEL_TYPES = ['Octane92', 'Octane95', 'Diesel']
 
-# Vehicle distribution probabilities
-VEHICLE_PROBS = [0.4, 0.2, 0.4] #in order of octane-92, octane-95, diesel - Normally octane 95 usera are rare.
-
 # Liters distribution (triangular)
 LITERS_DIST = {
     'Motorcycle_Octane92': (1, 3, 5),
@@ -38,18 +36,22 @@ PAYMENT_TIME_DIST = (0.5, 1.0, 2.0)
 # Pump flow rate (liters/min)
 FLOW_RATE = 3.0
 
-# Number of pipes per fuel type
-PIPES_CONFIG = {
-    'Octane92': 2,   # shared over 2 pumps (1 pipe per side each)
-    'Octane95': 2,   # shared over 2 pumps (1 pipe per side each)
-    'Diesel': 4      # 2 pumps, 2 pipes each
-}
 
-# Arrival rate (vehicles per hour)
-ARRIVAL_RATES = {
-    'Octane92': 12,
-    'Octane95': 3,
-    'Diesel': 7
+                            # ------ Scenario configurations -----------
+
+SCENARIOS = {
+    'Normal': {
+        'PIPES_CONFIG': {'Octane92': 2, 'Octane95': 2, 'Diesel': 4},
+        'ARRIVAL_RATES': {'Octane92': 12, 'Octane95': 3, 'Diesel': 7}
+    },
+    'PeakTraffic': {
+        'PIPES_CONFIG': {'Octane92': 2, 'Octane95': 2, 'Diesel': 4},
+        'ARRIVAL_RATES': {'Octane92': 20, 'Octane95': 6, 'Diesel': 12}
+    },
+    'ExtraPumps': {
+        'PIPES_CONFIG': {'Octane92': 3, 'Octane95': 3, 'Diesel': 6},
+        'ARRIVAL_RATES': {'Octane92': 20, 'Octane95': 6, 'Diesel': 12}
+    }
 }
 
 
@@ -78,14 +80,11 @@ def interarrival_time(rate_per_hour):
                         # ----- Gas station class --------
 
 class GasStation:
-    def __init__(self, env):
+    def __init__(self, env, pipes_config):
         self.env = env
-        # Resources for each fuel type
-        self.resources = {fuel: simpy.Resource(env, capacity=PIPES_CONFIG[fuel]) for fuel in FUEL_TYPES}
-        # Metrics
+        self.resources = {fuel: simpy.Resource(env, capacity=pipes_config[fuel]) for fuel in FUEL_TYPES}
         self.wait_times = {fuel: [] for fuel in FUEL_TYPES}
         self.total_times = {fuel: [] for fuel in FUEL_TYPES}
-        self.service_times = {fuel: [] for fuel in FUEL_TYPES}
         self.queue_length_series = {fuel: [] for fuel in FUEL_TYPES}
 
     def record_queue(self):
@@ -99,14 +98,13 @@ class GasStation:
             yield req
             wait_time = self.env.now - arrival_time
             self.wait_times[fuel_type].append(wait_time)
-            
+
             liters = sample_liters(fuel_type)
             fueling_time = liters / FLOW_RATE
             payment_time = sample_payment_time()
             total_service = fueling_time + payment_time
-            self.service_times[fuel_type].append(total_service)
-
             yield self.env.timeout(total_service)
+
             self.total_times[fuel_type].append(self.env.now - arrival_time)
             self.record_queue()
 
@@ -118,16 +116,15 @@ class GasStation:
             i += 1
             self.env.process(self.customer_process(fuel_type, f'{fuel_type}-{i}'))
 
-
                                     # ------ Run the simulation ----------
 
-def main():
+def run_scenario(name, config):
+    print(f"\n--- Scenario: {name} ---")
     random.seed(RANDOM_SEED)
     env = simpy.Environment()
-    station = GasStation(env)
+    station = GasStation(env, config['PIPES_CONFIG'])
 
-    # Start separate arrival generators per fuel type
-    for fuel, rate in ARRIVAL_RATES.items():
+    for fuel, rate in config['ARRIVAL_RATES'].items():
         env.process(station.arrival_generator(fuel, rate))
 
     env.run(until=SIM_TIME)
@@ -147,8 +144,9 @@ def main():
             plt.step(times, qlens, where='post')
             plt.xlabel('Time (minutes)')
             plt.ylabel('Queue Length')
-            plt.title(f'Queue Length Over Time ({fuel})')
+            plt.title(f'{fuel} Queue Length Over Time ({name})')
             plt.show()
 
 if __name__ == "__main__":
-    main()
+    for scenario_name, scenario_config in SCENARIOS.items():
+        run_scenario(scenario_name, scenario_config)

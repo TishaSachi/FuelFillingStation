@@ -11,9 +11,9 @@ import random
 import matplotlib.pyplot as plt
 import statistics
 
-# -----------------------------
-# Simulation parameters
-# -----------------------------
+
+                                # ------- Simulation parameters ----------
+
 RANDOM_SEED = 42
 SIM_HOURS = 8
 SIM_TIME = SIM_HOURS * 60  # in minutes
@@ -22,13 +22,14 @@ SIM_TIME = SIM_HOURS * 60  # in minutes
 FUEL_TYPES = ['Octane92', 'Octane95', 'Diesel']
 
 # Vehicle distribution probabilities
-VEHICLE_PROBS = [0.4, 0.4, 0.2]
+VEHICLE_PROBS = [0.4, 0.2, 0.4] #in order of octane-92, octane-95, diesel - Normally octane 95 usera are rare.
 
 # Liters distribution (triangular)
 LITERS_DIST = {
-    'Octane92': (10, 25, 40),
-    'Octane95': (10, 25, 40),
-    'Diesel': (20, 50, 100)
+    'Motorcycle_Octane92': (1, 3, 5),
+    'Car_Octane92': (10, 25, 40),
+    'Car_Octane95': (10, 25, 40),
+    'Lorry_Diesel': (20, 50, 100)
 }
 
 # Payment time (triangular, minutes)
@@ -45,36 +46,42 @@ PIPES_CONFIG = {
 }
 
 # Arrival rate (vehicles per hour)
-ARRIVAL_RATE = 20
+ARRIVAL_RATES = {
+    'Octane92': 12,
+    'Octane95': 3,
+    'Diesel': 7
+}
 
-# -----------------------------
-# Helper functions
-# -----------------------------
+
+                            # ------ Helper functions -----------
+
 def triangular_sample(tpl):
     return random.triangular(*tpl)
 
 def sample_liters(fuel_type):
-    return triangular_sample(LITERS_DIST[fuel_type])
+    mapping = {
+        'Octane92': 'Car_Octane92',
+        'Octane95': 'Car_Octane95',
+        'Diesel': 'Lorry_Diesel'
+    }
+    return triangular_sample(LITERS_DIST[mapping[fuel_type]])
 
 def sample_payment_time():
     return triangular_sample(PAYMENT_TIME_DIST)
-
-def choose_fuel_type():
-    return random.choices(FUEL_TYPES, weights=VEHICLE_PROBS, k=1)[0]
 
 def interarrival_time(rate_per_hour):
     mean_minutes = 60.0 / rate_per_hour
     return random.expovariate(1.0 / mean_minutes)
 
-# -----------------------------
-# Gas station class
-# -----------------------------
+
+
+                        # ----- Gas station class --------
+
 class GasStation:
     def __init__(self, env):
         self.env = env
-        # Create resources for each fuel type
+        # Resources for each fuel type
         self.resources = {fuel: simpy.Resource(env, capacity=PIPES_CONFIG[fuel]) for fuel in FUEL_TYPES}
-        
         # Metrics
         self.wait_times = {fuel: [] for fuel in FUEL_TYPES}
         self.total_times = {fuel: [] for fuel in FUEL_TYPES}
@@ -87,8 +94,8 @@ class GasStation:
 
     def customer_process(self, fuel_type, name):
         arrival_time = self.env.now
+        self.record_queue()
         with self.resources[fuel_type].request() as req:
-            self.record_queue()
             yield req
             wait_time = self.env.now - arrival_time
             self.wait_times[fuel_type].append(wait_time)
@@ -103,32 +110,35 @@ class GasStation:
             self.total_times[fuel_type].append(self.env.now - arrival_time)
             self.record_queue()
 
-    def arrival_generator(self, arrival_rate):
+    def arrival_generator(self, fuel_type, arrival_rate):
         i = 0
         while self.env.now < SIM_TIME:
             iat = interarrival_time(arrival_rate)
             yield self.env.timeout(iat)
             i += 1
-            fuel_type = choose_fuel_type()
-            self.env.process(self.customer_process(fuel_type, f'Vehicle-{i}'))
+            self.env.process(self.customer_process(fuel_type, f'{fuel_type}-{i}'))
 
-# -----------------------------
-# Run the simulation
-# -----------------------------
+
+                                    # ------ Run the simulation ----------
+
 def main():
     random.seed(RANDOM_SEED)
     env = simpy.Environment()
     station = GasStation(env)
-    env.process(station.arrival_generator(ARRIVAL_RATE))
+
+    # Start separate arrival generators per fuel type
+    for fuel, rate in ARRIVAL_RATES.items():
+        env.process(station.arrival_generator(fuel, rate))
+
     env.run(until=SIM_TIME)
 
-    # Print basic metrics
+    # Print metrics
     for fuel in FUEL_TYPES:
         avg_wait = statistics.mean(station.wait_times[fuel]) if station.wait_times[fuel] else 0
         avg_total = statistics.mean(station.total_times[fuel]) if station.total_times[fuel] else 0
         print(f'{fuel} - Avg Wait Time: {avg_wait:.2f} min, Avg Total Time: {avg_total:.2f} min')
 
-    # Plot queue length for each fuel type
+    # Plot queue lengths
     for fuel in FUEL_TYPES:
         series = station.queue_length_series[fuel]
         if series:
